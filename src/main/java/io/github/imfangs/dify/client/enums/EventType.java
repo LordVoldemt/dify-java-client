@@ -21,6 +21,7 @@ public enum EventType {
     // Agent 相关事件
     AGENT_MESSAGE("agent_message"),       // Agent模式下返回文本块事件
     AGENT_THOUGHT("agent_thought"),       // Agent模式下思考步骤事件
+    AGENT_LOG("agent_log"),               // Agent 日志事件
     MESSAGE_FILE("message_file"),         // 文件事件
 
     // Workflow 相关事件
@@ -28,6 +29,16 @@ public enum EventType {
     NODE_STARTED("node_started"),         // node 开始执行
     NODE_FINISHED("node_finished"),       // node 执行结束
     WORKFLOW_FINISHED("workflow_finished"), // workflow 执行结束
+
+    // 迭代器相关事件
+    ITERATION_STARTED("iteration_started"),     // 迭代器开始执行
+    ITERATION_NEXT("iteration_next"),           // 迭代器下一次执行
+    ITERATION_COMPLETED("iteration_completed"), // 迭代器执行完成
+
+    // 循环相关事件
+    LOOP_STARTED("loop_started"),      // 循环开始执行
+    LOOP_NEXT("loop_next"),            // 循环下一次执行
+    LOOP_COMPLETED("loop_completed"),  // 循环执行完成
 
     // Workflow 中间节点解析
     WORKFLOW_TEXT_CHUNK("text_chunk") // workflow llm模型输入结果

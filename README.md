@@ -60,14 +60,14 @@ Dify Java Client 提供以下核心功能：
 <dependency>
     <groupId>io.github.imfangs</groupId>
     <artifactId>dify-java-client</artifactId>
-    <version>1.0.5</version>
+    <version>1.1.9</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'io.github.imfangs:dify-java-client:1.0.5'
+implementation 'io.github.imfangs:dify-java-client:1.1.9'
 ```
 
 ## 快速开始
@@ -377,11 +377,16 @@ System.out.println("知识库总数: " + datasetList.getTotal());
 #### 文档管理
 
 ```java
-// 通过文本创建文档
+// 通过文本创建文档 - 使用自动处理模式（推荐）
 CreateDocumentByTextRequest docRequest = CreateDocumentByTextRequest.builder()
     .name("测试文档-" + System.currentTimeMillis())
     .text("这是一个测试文档的内容。\n这是第二行内容。\n这是第三行内容。")
     .indexingTechnique("high_quality")
+    .docForm("text_model")
+    .docLanguage("Chinese")
+    .processRule(ProcessRule.builder()
+        .mode("automatic")  // 使用自动处理模式
+        .build())
     .build();
 
 DocumentResponse docResponse = datasetsClient.createDocumentByText(datasetId, docRequest);
@@ -524,3 +529,8 @@ DifyClient client = DifyClientFactory.createClient(config);
 - [Dify 官网](https://dify.ai)
 - [Dify 文档](https://docs.dify.ai)
 - [Dify GitHub](https://github.com/langgenius/dify)
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=imfangs/dify-java-client&type=Date)](https://www.star-history.com/#imfangs/dify-java-client&Date)
+

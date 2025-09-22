@@ -2,8 +2,10 @@ package io.github.imfangs.dify.client.impl;
 
 import io.github.imfangs.dify.client.DifyClient;
 import io.github.imfangs.dify.client.callback.*;
+import io.github.imfangs.dify.client.enums.EventType;
 import io.github.imfangs.dify.client.enums.ResponseMode;
 import io.github.imfangs.dify.client.event.BaseEvent;
+import io.github.imfangs.dify.client.event.PingEvent;
 import io.github.imfangs.dify.client.exception.DifyApiException;
 import io.github.imfangs.dify.client.model.chat.*;
 import io.github.imfangs.dify.client.model.common.SimpleResponse;
@@ -18,6 +20,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -29,6 +32,7 @@ public class DefaultDifyClient extends DifyBaseClientImpl implements DifyClient 
 
     // 流式响应相关常量
     private static final String DATA_PREFIX = "data:";
+    private static final String PING_EVENT = "event: ping";
 
     // API 路径常量
     // 对话型应用相关路径
@@ -51,6 +55,21 @@ public class DefaultDifyClient extends DifyBaseClientImpl implements DifyClient 
     private static final String WORKFLOWS_RUN_PATH = "/workflows/run";
     private static final String WORKFLOWS_TASKS_PATH = "/workflows/tasks";
     private static final String WORKFLOWS_LOGS_PATH = "/workflows/logs";
+
+    //标注应用相关路径
+    private static final String APPS_ANNOTATIONS_PATH = "/apps/annotations";
+    private static final String APPS_ANNOTATIONS_REPLY_PATH = "/apps/annotation-reply";
+
+    // 音频文件类型
+    private static final Map<String, MediaType> AUDIO_MEDIA_TYPES = new HashMap<String, MediaType>() {{
+        put("mp3", MediaType.parse("audio/mp3"));
+        put("mp4", MediaType.parse("audio/mp4"));
+        put("mpeg", MediaType.parse("audio/mpeg"));
+        put("mpga", MediaType.parse("audio/mpga"));
+        put("m4a", MediaType.parse("audio/m4a"));
+        put("wav", MediaType.parse("audio/wav"));
+        put("webm", MediaType.parse("audio/webm"));
+    }};
 
     /**
      * 构造函数
@@ -180,7 +199,18 @@ public class DefaultDifyClient extends DifyBaseClientImpl implements DifyClient 
     @Override
     public AudioToTextResponse audioToText(File file, String user) throws IOException, DifyApiException {
         log.debug("语音转文字: fileName={}, user={}", file.getName(), user);
-        RequestBody requestBody = new MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("file", file.getName(), RequestBody.create(AUDIO, file)).addFormDataPart("user", user).build();
+
+        String extension = getFileExtension(file.getName()).toLowerCase();
+        MediaType mediaType = AUDIO_MEDIA_TYPES.get(extension);
+        if (mediaType == null) {
+            throw new RuntimeException("不支持的音频格式: " + extension + "。支持的格式: mp3, mp4, mpeg, mpga, m4a, wav, webm");
+        }
+
+        RequestBody requestBody = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", file.getName(), RequestBody.create(mediaType, file))
+                .addFormDataPart("user", user)
+                .build();
 
         Request request = new Request.Builder().url(baseUrl + AUDIO_TO_TEXT_PATH).post(requestBody).header("Authorization", "Bearer " + apiKey).build();
 
@@ -293,10 +323,18 @@ public class DefaultDifyClient extends DifyBaseClientImpl implements DifyClient 
         return executePost(WORKFLOWS_TASKS_PATH + "/" + taskId + STOP_PATH, body, WorkflowStopResponse.class);
     }
 
+    /**
+     * 获取工作流运行状态
+     *
+     * @param workflowRunId 工作流运行实例 ID（从工作流执行响应中获得的运行实例标识）
+     * @return 工作流执行状态响应
+     * @throws IOException      IO异常
+     * @throws DifyApiException API异常
+     */
     @Override
-    public WorkflowRunStatusResponse getWorkflowRun(String workflowId) throws IOException, DifyApiException {
-        log.debug("获取工作流执行状态: workflowId={}", workflowId);
-        return executeGet(WORKFLOWS_PATH + "/run/" + workflowId, WorkflowRunStatusResponse.class);
+    public WorkflowRunStatusResponse getWorkflowRun(String workflowRunId) throws IOException, DifyApiException {
+        log.debug("获取工作流执行状态: workflowRunId={}", workflowRunId);
+        return executeGet(WORKFLOWS_PATH + "/run/" + workflowRunId, WorkflowRunStatusResponse.class);
     }
 
     @Override
@@ -316,10 +354,10 @@ public class DefaultDifyClient extends DifyBaseClientImpl implements DifyClient 
     /**
      * 执行流式请求
      *
-     * @param path 请求路径
-     * @param body 请求体
+     * @param path          请求路径
+     * @param body          请求体
      * @param lineProcessor 行处理器，返回false表示停止处理
-     * @param errorHandler 错误处理器
+     * @param errorHandler  错误处理器
      */
     private void executeStreamRequest(String path, Object body, LineProcessor lineProcessor, Consumer<Exception> errorHandler) {
         // 创建请求
@@ -396,12 +434,15 @@ public class DefaultDifyClient extends DifyBaseClientImpl implements DifyClient 
     /**
      * 处理流式数据行
      *
-     * @param line 数据行
-     * @param callback 回调接口
+     * @param line           数据行
+     * @param callback       回调接口
      * @param eventProcessor 事件处理器
      * @return 是否继续处理
      */
     private boolean processStreamLine(String line, BaseStreamCallback callback, EventProcessor eventProcessor) {
+        if(line == null || line.trim().isEmpty()){
+            return true;
+        }
         if (line.startsWith(DATA_PREFIX)) {
             String data = line.substring(DATA_PREFIX.length()).trim();
 
@@ -419,6 +460,11 @@ public class DefaultDifyClient extends DifyBaseClientImpl implements DifyClient 
                 log.error("解析事件数据失败: {}", data, e);
                 callback.onException(e);
             }
+        } else if (PING_EVENT.equalsIgnoreCase(line)) {
+            // 心跳事件与 Dify API 文档中描述不一致，返回的不是data开头
+            PingEvent pingEvent = new PingEvent();
+            pingEvent.setEvent(EventType.PING.getValue());
+            callback.onPing(pingEvent);
         }
         return true; // 继续处理
     }
@@ -431,9 +477,145 @@ public class DefaultDifyClient extends DifyBaseClientImpl implements DifyClient 
         /**
          * 处理事件
          *
-         * @param data 事件数据
+         * @param data      事件数据
          * @param eventType 事件类型
          */
         void process(String data, String eventType);
+    }
+
+    /**
+     * 获取标注列表
+     *
+     * @param page  页码
+     * @param limit 每页数量
+     * @return 响应
+     * @throws IOException      IO异常
+     * @throws DifyApiException API异常
+     */
+    @Override
+    public AnnotationListResponse getAnnotations(Integer page, Integer limit) throws IOException, DifyApiException {
+        log.debug("获取标注列表: page={}, limit={}", page, limit);
+        Map<String, Object> params = new HashMap<>(2);
+        params.put("page", page);
+        params.put("limit", limit);
+        String url = buildUrlWithParams(APPS_ANNOTATIONS_PATH, params);
+        Request request = createGetRequest(url);
+        return executeRequest(request, AnnotationListResponse.class);
+    }
+
+    /**
+     * 创建标注
+     *
+     * @param question 问题
+     * @param answer   答案内容
+     * @return 标注
+     * @throws IOException      IO异常
+     * @throws DifyApiException API异常
+     */
+    @Override
+    public Annotation saveAnnotation(String question, String answer) throws IOException, DifyApiException {
+        log.debug("创建标注: question={}, answer={}", question, answer);
+        Map<String, String> body = new HashMap<>(2);
+        body.put("question", question);
+        body.put("answer", answer);
+        return executePost(APPS_ANNOTATIONS_PATH, body, Annotation.class);
+    }
+
+    /**
+     * 更新标注
+     *
+     * @param annotationId 标注 ID
+     * @param question     问题
+     * @param answer       答案内容
+     * @return 标注
+     * @throws IOException      IO异常
+     * @throws DifyApiException API异常
+     */
+    @Override
+    public Annotation updateAnnotation(String annotationId, String question, String answer) throws IOException, DifyApiException {
+        log.debug("更新标注: annotationId={}, question={}, answer={}", annotationId, question, answer);
+        Map<String, String> body = new HashMap<>(2);
+        body.put("question", question);
+        body.put("answer", answer);
+        return executePut(APPS_ANNOTATIONS_PATH + "/" + annotationId, body, Annotation.class);
+    }
+
+    /**
+     * 删除标注
+     *
+     * @param annotationId 标注 ID
+     * @return 响应
+     * @throws IOException      IO异常
+     * @throws DifyApiException API异常
+     */
+    @Override
+    public SimpleResponse deleteAnnotation(String annotationId) throws IOException, DifyApiException {
+        log.debug("删除标注: annotationId={}", annotationId);
+        Map<String, String> body = new HashMap<>(1);
+        return executeDelete(APPS_ANNOTATIONS_PATH + "/" + annotationId, body, SimpleResponse.class);
+    }
+
+    /**
+     * 标注回复初始设置
+     *
+     * @param action                动作，只能是 'enable' 或 'disable'
+     * @param embeddingProviderName 指定的嵌入模型提供商, 必须先在系统内设定好接入的模型，对应的是provider字段
+     * @param embeddingModelName    指定的嵌入模型，对应的是model字段
+     * @param scoreThreshold        相似度阈值，当相似度大于该阈值时，系统会自动回复，否则不回复
+     * @return 标注回复
+     * @throws IOException      IO异常
+     * @throws DifyApiException API异常
+     */
+    @Override
+    public AnnotationReply annotationReply(String action, String embeddingProviderName, String embeddingModelName, Integer scoreThreshold) throws IOException, DifyApiException {
+        log.debug("标注回复初始设置: action={}, embeddingProviderName={}, embeddingModelName={}, scoreThreshold={}", action, embeddingProviderName, embeddingModelName, scoreThreshold);
+        Map<String, Object> body = new HashMap<>(3);
+        body.put("embeddingProviderName", embeddingProviderName);
+        body.put("embeddingModelName", embeddingModelName);
+        body.put("scoreThreshold", scoreThreshold);
+        return executePost(APPS_ANNOTATIONS_REPLY_PATH + "/" + action, body, AnnotationReply.class);
+    }
+
+    /**
+     * 查询标注回复初始设置任务状态
+     *
+     * @param action 动作，只能是 'enable' 或 'disable'，并且必须和标注回复初始设置接口的动作一致
+     * @param jobId  任务 ID，从标注回复初始设置接口返回的 jobId
+     * @return 标注回复
+     * @throws IOException      IO异常
+     * @throws DifyApiException API异常
+     */
+    @Override
+    public AnnotationReply getAnnotationReply(String action, String jobId) throws IOException, DifyApiException {
+        log.debug("查询标注回复初始设置任务状态: action={}, jobId={}", action, jobId);
+        return executeGet(APPS_ANNOTATIONS_REPLY_PATH + "/" + action + "/status/" + jobId, AnnotationReply.class);
+    }
+
+    /**
+     * 获取对话变量
+     * 从特定对话中检索变量。此端点对于提取对话过程中捕获的结构化数据非常有用。
+     * @param conversationId 会话 ID
+     * @param user 用户标识，由开发者定义规则，需保证用户标识在应用内唯一。重要说明: Service API 不共享 WebApp 创建的对话。通过 API 创建的对话与 WebApp 界面中创建的对话是相互隔离的。
+     * @param lastId （选填）当前页最后面一条记录的 ID，默认 null。
+     * @param limit 一次请求返回多少条记录，默认 20 条，最大 100 条，最小 1 条。
+     * @param variableName （选填）按变量名称筛选。
+     * @return
+     */
+    @Override
+    public VariableResponse getConversationVariables(String conversationId, String user, String lastId, Integer limit, String variableName) throws DifyApiException, IOException {
+        log.debug("获取对话变量: conversationId={}, user={}, lastId={}, limit={}, variableName={}", conversationId, user, lastId, limit, variableName);
+        StringBuilder path = new StringBuilder(String.format(CONVERSATIONS_PATH + "/%s/variables?user=%s&limit=%s", conversationId, user, limit));
+        Optional.ofNullable(lastId).ifPresent((lId) -> {
+            path.append("&last_id=").append(lId);
+        });
+        Optional.ofNullable(variableName).ifPresent((vName) -> {
+            path.append("&variable_name=").append(vName);
+        });
+        return executeGet(path.toString(), VariableResponse.class);
+    }
+
+    private String getFileExtension(String fileName) {
+        int lastDotIndex = fileName.lastIndexOf('.');
+        return lastDotIndex > 0 ? fileName.substring(lastDotIndex + 1) : "";
     }
 }
